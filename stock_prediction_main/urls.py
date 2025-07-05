@@ -22,6 +22,7 @@ urlpatterns = [
     path("__reload__/", include("django_browser_reload.urls")),
     path('healthz/', healthz, name='healthz'),
     path('api/v1/', include('api.urls')),
-    path('api/v1/', include('prediction.urls'))
+    path('api/v1/', include('prediction.urls')),
+    path('', include('frontend.urls'))
     
 ]

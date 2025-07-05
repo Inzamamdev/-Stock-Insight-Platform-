@@ -1,0 +1,158 @@
+{% extends "base.html" %} {% block content %}
+<div class="min-h-screen p-6 bg-gray-50">
+  <div class="max-w-3xl mx-auto bg-white shadow-lg rounded-lg p-6">
+    <h2 class="text-2xl font-semibold text-center text-gray-800 mb-6">
+      Stock Price Predictor
+    </h2>
+
+    <!-- Ticker Form -->
+    <form id="predict-form" class="flex items-center gap-4 mb-6">
+      {% csrf_token %}
+      <input
+        type="text"
+        id="ticker"
+        name="ticker"
+        placeholder="Enter Stock Ticker (e.g. TSLA)"
+        required
+        class="flex-1 border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <button
+        type="submit"
+        class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+      >
+        Predict
+      </button>
+    </form>
+
+    <!-- Prediction Result -->
+    <div id="prediction-result" class="space-y-4 hidden">
+      <p class="text-lg text-gray-700 font-medium">
+        Next-day predicted price:
+        <span id="predicted-price" class="font-bold"></span>
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <img
+          id="plot1"
+          alt="Closing Price History"
+          class="w-full border rounded shadow"
+        />
+        <img
+          id="plot2"
+          alt="Actual vs Predicted"
+          class="w-full border rounded shadow"
+        />
+      </div>
+    </div>
+  </div>
+
+  <!-- Past Predictions Table -->
+  <div class="max-w-4xl mx-auto mt-12 bg-white shadow rounded-lg p-6">
+    <h3 class="text-xl font-semibold mb-4">Past Predictions</h3>
+    <table class="w-full table-auto border-collapse">
+      <thead>
+        <tr class="bg-gray-100">
+          <th class="text-left px-4 py-2">Ticker</th>
+          <th class="text-left px-4 py-2">Next-Day Price</th>
+          <th class="text-left px-4 py-2">Prediction Accuracy</th>
+          <th class="text-left px-4 py-2">Date</th>
+        </tr>
+      </thead>
+      <tbody id="predictions-table">
+        <!-- Filled dynamically -->
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Vanilla JS for AJAX -->
+<script>
+  document
+    .getElementById("predict-form")
+    .addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const ticker = document.getElementById("ticker").value;
+      const csrfToken = document.querySelector(
+        "[name=csrfmiddlewaretoken]"
+      ).value;
+
+      try {
+        const res = await fetch("/api/v1/predict/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken,
+          },
+          body: JSON.stringify({ ticker }),
+          credentials: "include", // Ensure cookies are sent
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          document
+            .getElementById("prediction-result")
+            .classList.remove("hidden");
+          document.getElementById(
+            "predicted-price"
+          ).textContent = `$${data.next_day_price.toFixed(2)}`;
+          document.getElementById("plot1").src = data.plot_urls[0];
+          document.getElementById("plot2").src = data.plot_urls[1];
+
+          // Refresh the predictions table
+          fetchPredictions();
+        } else {
+          const errorData = await res.json();
+          if (res.status === 401) {
+            alert("Please log in to make predictions.");
+            window.location.href = "{% url 'login' %}";
+          } else {
+            alert(errorData.error || "Prediction failed");
+          }
+        }
+      } catch (error) {
+        alert("Network error: " + error.message);
+      }
+    });
+
+  async function fetchPredictions() {
+    try {
+      const res = await fetch("/api/v1/predictions/", {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // Ensure cookies are sent
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          console.error("Unauthorized: Redirecting to login");
+          return;
+        }
+        console.error("Failed to fetch predictions:", res.status);
+        return;
+      }
+
+      const predictions = await res.json();
+      const table = document.getElementById("predictions-table");
+      table.innerHTML = "";
+
+      predictions.forEach((p) => {
+        const row = `
+        <tr>
+          <td class="border px-4 py-2">${p.ticker}</td>
+          <td class="border px-4 py-2">$${p.next_day_price.toFixed(2)}</td>
+          <td class="border px-4 py-2">${(p.metrics.r2 * 100).toFixed(2)}%</td>
+          <td class="border px-4 py-2">${new Date(
+            p.created_at
+          ).toLocaleString()}</td>
+        </tr>`;
+        table.innerHTML += row;
+      });
+    } catch (error) {
+      console.error("Error fetching predictions:", error);
+    }
+  }
+
+  window.addEventListener("DOMContentLoaded", fetchPredictions);
+</script>
+{% endblock %}

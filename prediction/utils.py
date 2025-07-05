@@ -13,7 +13,7 @@ from decouple import config
 from django.conf import settings
 
 def predict_stock(ticker, user):
-    ticker = ticker.upper() 
+    ticker = ticker.upper()
 
     # Load model
     model_path = config('MODEL_PATH', default='stock_prediction_model.keras')
@@ -23,9 +23,12 @@ def predict_stock(ticker, user):
     model = load_model(model_path)
 
     # Get historical data
-    df = yf.download(ticker, period="10y")
-    if df.empty:
-        raise ValueError(f"No data found for ticker: {ticker}")
+    try:
+        df = yf.download(ticker, period="10y")
+        if df.empty:
+            raise ValueError(f"No data found for ticker: {ticker}")
+    except Exception as e:
+        raise ValueError(f"Failed to download data for {ticker}: {str(e)}")
     
     data = df[['Close']].values
     scaler = MinMaxScaler()
@@ -38,9 +41,12 @@ def predict_stock(ticker, user):
     X, y = np.array(X), np.array(y)
 
     # Predict
-    predictions = model.predict(X)
-    predicted_next = model.predict(np.expand_dims(scaled_data[-60:], axis=0))
-    next_day_price = scaler.inverse_transform(predicted_next)[0][0]
+    try:
+        predictions = model.predict(X)
+        predicted_next = model.predict(np.expand_dims(scaled_data[-60:], axis=0))
+        next_day_price = scaler.inverse_transform(predicted_next)[0][0]
+    except Exception as e:
+        raise RuntimeError(f"Prediction failed for {ticker}: {str(e)}")
 
     # Metrics
     mse = mean_squared_error(y, predictions)
@@ -49,43 +55,61 @@ def predict_stock(ticker, user):
 
     # Save plots
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    plot_dir = os.path.join(settings.BASE_DIR, 'static', 'plots')
-    os.makedirs(plot_dir, exist_ok=True)
+    plot_dir = os.path.join(settings.MEDIA_ROOT, 'plots')
+    try:
+        os.makedirs(plot_dir, exist_ok=True)
+        print(f"Created/verified plot directory: {plot_dir}, writable: {os.access(plot_dir, os.W_OK)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to create plot directory {plot_dir}: {str(e)}")
+
     plot1_path = os.path.join(plot_dir, f"{ticker}_history_{timestamp}.png")
     plot2_path = os.path.join(plot_dir, f"{ticker}_predicted_{timestamp}.png")
 
     # Plot 1: Historical closing prices
-    plt.figure()
-    df['Close'].plot(title="Closing Price History")
-    plt.savefig(plot1_path)
-    plt.close()
+    try:
+        plt.figure()
+        df['Close'].plot(title="Closing Price History")
+        plt.savefig(plot1_path)
+        plt.close()
+        print(f"Saved history plot: {plot1_path}, exists: {os.path.exists(plot1_path)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to save history plot {plot1_path}: {str(e)}")
 
     # Plot 2: Actual vs Predicted
-    plt.figure()
-    plt.plot(scaler.inverse_transform(y), label='Actual')
-    plt.plot(scaler.inverse_transform(predictions), label='Predicted')
-    plt.legend()
-    plt.title("Actual vs Predicted")
-    plt.savefig(plot2_path)
-    plt.close()
+    try:
+        plt.figure()
+        plt.plot(scaler.inverse_transform(y), label='Actual')
+        plt.plot(scaler.inverse_transform(predictions), label='Predicted')
+        plt.legend()
+        plt.title("Actual vs Predicted")
+        plt.savefig(plot2_path)
+        plt.close()
+        print(f"Saved predicted plot: {plot2_path}, exists: {os.path.exists(plot2_path)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to save predicted plot {plot2_path}: {str(e)}")
 
     # Save to DB
     from .models import Prediction
-    prediction = Prediction.objects.create(
-        user=user,
-        ticker=ticker,
-        next_day_price=next_day_price,
-        metrics={'mse': mse, 'rmse': rmse, 'r2': r2},
-        plot_1_path=plot1_path,
-        plot_2_path=plot2_path
-    )
+    try:
+        prediction = Prediction.objects.create(
+            user=user,
+            ticker=ticker,
+            next_day_price=next_day_price,
+            metrics={'mse': mse, 'rmse': rmse, 'r2': r2},
+            plot_1_path=f"{settings.MEDIA_URL}plots/{ticker}_history_{timestamp}.png",
+            plot_2_path=f"{settings.MEDIA_URL}plots/{ticker}_predicted_{timestamp}.png"
+        )
+        print(f"Saved prediction to DB: {ticker}, user: {user.username}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to save prediction to DB: {str(e)}")
 
     return {
         "next_day_price": next_day_price,
         "mse": mse,
         "rmse": rmse,
         "r2": r2,
-          "plot_urls": [str(plot1_path).replace(str(settings.BASE_DIR), ''), 
-                              str(plot2_path).replace(str(settings.BASE_DIR), ''),],
-        
+        "plot_urls": [
+            f"{settings.MEDIA_URL}plots/{ticker}_history_{timestamp}.png",
+            f"{settings.MEDIA_URL}plots/{ticker}_predicted_{timestamp}.png"
+        ],
     }
